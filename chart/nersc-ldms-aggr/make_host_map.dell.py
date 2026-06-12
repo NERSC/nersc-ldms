@@ -11,10 +11,8 @@ import time
 import shutil
 import logging
 import argparse
-import requests
-import urllib3
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+import requests  # pylint: disable=unused-import
+import urllib3  # pylint: disable=unused-import
 
 def setup_logging(verbose=False):
     """Configure logging facility."""
@@ -49,7 +47,7 @@ class LdmsdManager:
         os.makedirs(self.out_dir, exist_ok=True)
    
         # PLACE HOLDER: just copy the example file for now
-        shutil.copy("host_map.r7525.json", self.out_dir)
+        shutil.copy("host_map.slurm-cluster.json", self.out_dir)
 
 def main():
     parser = argparse.ArgumentParser()

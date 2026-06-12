@@ -10,18 +10,18 @@ import logging
 import os
 import shutil
 import time
-import yaml
+import yaml  # pylint: disable=import-error
 
-def setup_logging(verbose=False):
+def setup_logging(verbose_mode=False):
     """Configure logging."""
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.DEBUG if verbose_mode else logging.INFO
     logging.basicConfig(level=level, format='%(asctime)s %(levelname)s: %(message)s')
 
 def load_config(config_path):
     """Load JSON config file from a given file path."""
     if not os.path.exists(config_path):
         return {}
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def str_presenter(dumper, data):
@@ -30,7 +30,7 @@ def str_presenter(dumper, data):
         return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
     return dumper.represent_scalar('tag:yaml.org,2002:str', data)
 
-class LdmsdManager:
+class LdmsdManager:  # pylint: disable=too-many-instance-attributes
     """Generate ldmsd configs and parameters."""
 
     def __init__(self, config=None):
@@ -40,36 +40,58 @@ class LdmsdManager:
         self.out_dir = os.path.join(self.base_dir, "out_dir")
         self.env = {}
         self.configmaps = []
-        self.ldmsd_port = 6000
+
+        # Read port configuration directly from sys_opts
+        self.agg_port = self.config['sys_opts'].get('agg_port', 6001)
+        self.store_port = self.config['sys_opts'].get('store_port', 6001)
+        
+        # Initialize to agg_port - 1 because make_agg_configs increments before use
+        self.ldmsd_port = self.agg_port - 1
+
+        # Feature flags for optional components
+        self.enable_stream = self.config['sys_opts'].get('enable_stream', False)
+        self.enable_exporter = self.config['sys_opts'].get('enable_exporter', False)
+
+        logging.info("LDMS Port Configuration:")
+        logging.info("  Aggregator ports start from: %s", self.agg_port)
+        logging.info("  Store port: %s", self.store_port)
+        logging.info("  Feature flags: enable_stream=%s, enable_exporter=%s",
+                     self.enable_stream, self.enable_exporter)
 
     def main(self):
         """Main loop."""
         now = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        logging.info(f"BEGIN LDMS Make LDMS Config: {now}")
+        logging.info("BEGIN LDMS Make LDMS Config: %s", now)
         self.make_agg_configs()
         self.make_store_configs()
-        self.make_stream_config()
-        self.make_exporter_configs()
+        if self.enable_stream:
+            self.make_stream_config()
+        else:
+            logging.info("Stream config DISABLED (enable_stream=false)")
+        if self.enable_exporter:
+            self.make_exporter_configs()
+        else:
+            logging.info("Exporter config DISABLED (enable_exporter=false)")
         self.make_munge_configs()
         self.create_env_json()
         self.create_env_yaml()
         self.create_configmaps()
         self.copy_configmaps_to_helm()
         now = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        logging.info(f"END LDMS Make LDMS Config: {now}")
+        logging.info("END LDMS Make LDMS Config: %s", now)
 
     def make_munge_configs(self):
-        logging.info("Make Agg Configs")
+        """Generate munge configuration files."""
+        logging.info("Make Munge Configs")
         munge_configs = {}
-        
-        for node_conf in self.config.get('node_types',{}).values():
+
+        for node_conf in self.config.get('node_types', {}).values():
             for conf in (node_conf, node_conf.get('sampler', {})):
                 auth_type = conf.get('auth_type')
                 if not auth_type:
                     continue
                 if auth_type == "munge":
                     auth_secret = conf.get('auth_secret')
-                    auth_secret_file = conf.get('auth_secret_file')
                     conf_file_name = f"{auth_secret}_munge.conf"
                     munge_configs[conf_file_name] = {
                         "MUNGED_BIN" : "/usr/sbin/munged",
@@ -84,13 +106,15 @@ class LdmsdManager:
             config_lines = []
             for key, value in munge_conf.items():
                 config_lines.append(f'export {key}="{value}"')
-            with open(os.path.join(self.out_dir, conf_file_name), "w") as f:
+            with open(os.path.join(self.out_dir, conf_file_name), "w",
+                      encoding='utf-8') as f:
                 f.write("\n".join(config_lines))
-            self.configmaps.extend([ 
+            self.configmaps.extend([
                 os.path.join(self.out_dir, conf_file_name)
             ])
 
-    def make_agg_configs(self):
+    def make_agg_configs(self):  # pylint: disable=too-many-locals
+        """Generate aggregator configuration files."""
         logging.info("Make Agg Configs")
 
         for ldmsd_name, ldmsd_conf in self.config['node_types'].items():
@@ -102,25 +126,32 @@ class LdmsdManager:
                 ldms_auth_option = f"socket=/run/{auth_secret}/munge.socket"
             elif auth_type == "ovis":
                 ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
-            
+            else:
+                ldms_auth_option = ""
+
             host_map_file = ldmsd_conf["host_map_file"]
-            with open(host_map_file) as fh:
+            with open(host_map_file, encoding='utf-8') as fh:
                 node_list = json.load(fh)
             split = ldmsd_conf.get("agg_count", 1)
             midpoint = len(node_list) // split
             for index, sub_list in enumerate(self.split_list(node_list, midpoint)):
                 sub_host_map_file = host_map_file.replace(".json", f"-{index}.json")
-                with open(sub_host_map_file, 'w') as fh:
+                with open(sub_host_map_file, 'w', encoding='utf-8') as fh:
                     json.dump(sub_list, fh, ensure_ascii=False, indent=4)
                 self.ldmsd_port += 1
                 alias_base = ldmsd_conf.get("alias", "other")
                 container_alias = f"{alias_base}-{index}"
-                logging.info(f"\tSPLIT: container_alias: {container_alias}, index: {index}, len sub_list: {len(sub_list)}")
+                logging.info(
+                    "\tSPLIT: container_alias: %s, index: %s, len sub_list: %s",
+                    container_alias, index, len(sub_list)
+                )
                 self.make_config_agg(
-                    ldmsd_name=ldmsd_name,
                     ldmsd_conf=ldmsd_conf,
                     nodes=sub_list,
-                    out_file=os.path.join(self.out_dir, f"ldmsd.nersc-ldms-aggr.{ldmsd_name}-{index}.conf")
+                    out_file=os.path.join(
+                        self.out_dir,
+                        f"ldmsd.nersc-ldms-aggr.{ldmsd_name}-{index}.conf"
+                    )
                 )
                 self.env.setdefault(ldmsd_name, {}).setdefault('agg', []).append({
                     'LDMSD_PORT': self.ldmsd_port,
@@ -132,19 +163,29 @@ class LdmsdManager:
                     'LDMSD_ALIAS': container_alias,
                     'LDMSD_ALIAS_LONG': f"{ldmsd_name}-{index}",
                     'LDMSD_CONF': f"/ldms_conf/ldmsd.nersc-ldms-aggr.{ldmsd_name}-{index}.conf",
-                    'EXPORTER_PORT': 9101
+                    # 'EXPORTER_PORT': 9101  # DISABLED: Exporter functionality
                 })
+                # Create environment file with pod name pattern for StatefulSet compatibility
+                pod_name = f"nersc-ldms-aggr-{index}"
+                self.create_ldms_env(
+                    os.path.join(self.out_dir, f"ldms-env.{pod_name}.sh"),
+                    self.env[ldmsd_name]['agg'][-1]
+                )
+                # Also create the original cluster-based name for backward compatibility
                 self.create_ldms_env(
                     os.path.join(self.out_dir, f"ldms-env.nersc-ldms-aggr.{ldmsd_name}-{index}.sh"),
                     self.env[ldmsd_name]['agg'][-1]
                 )
                 self.configmaps.extend([
                     os.path.join(self.out_dir, f"ldmsd.nersc-ldms-aggr.{ldmsd_name}-{index}.conf"),
-                    os.path.join(self.out_dir, f"ldms-env.nersc-ldms-aggr.{ldmsd_name}-{index}.sh")
+                    os.path.join(self.out_dir, f"ldms-env.nersc-ldms-aggr.{ldmsd_name}-{index}.sh"),
+                    os.path.join(self.out_dir, f"ldms-env.{pod_name}.sh")
                 ])
 
-    def make_store_configs(self):
+    def make_store_configs(self):  # pylint: disable=too-many-locals
+        """Generate store configuration files."""
         logging.info("Make Store Configs")
+        
         for ldmsd_name, ldmsd_conf in self.config['node_types'].items():
             # grab auth data
             auth_type = ldmsd_conf.get('auth_type')
@@ -158,7 +199,8 @@ class LdmsdManager:
             store_pod_index = 0
             host_map_file = ldmsd_conf["host_map_file"]
             for agg_index in range(len(self.env[ldmsd_name]['agg'])):
-                with open(host_map_file.replace(".json", f"-{agg_index}.json")) as fh:
+                with open(host_map_file.replace(".json", f"-{agg_index}.json"),
+                          encoding='utf-8') as fh:
                     node_list = json.load(fh)
                 nid_names = [x['hostname'] for x in node_list]
                 split = ldmsd_conf.get("store_split", 99999999)
@@ -166,7 +208,8 @@ class LdmsdManager:
                     alias_base = ldmsd_conf.get("alias", "other")
                     container_alias = f"{alias_base}-{store_pod_index}"
                     logging.info(
-                        f"\tSPLIT: container_alias: {container_alias}, index: {index}, len sub_list: {len(sub_list)}"
+                        "\tSPLIT: container_alias: %s, index: %s, len sub_list: %s",
+                        container_alias, index, len(sub_list)
                     )
                     split_regex = "|".join([f"{x}.*" for x in sub_list])
                     self.make_config_store(
@@ -178,7 +221,7 @@ class LdmsdManager:
                         split=split_regex
                     )
                     self.env.setdefault(ldmsd_name, {}).setdefault('store', []).append({
-                        'LDMSD_PORT': 6001,
+                        'LDMSD_PORT': self.store_port,
                         'LDMSD_HOST': f"nersc-ldms-store-{ldmsd_name}-{store_pod_index}.nersc-ldms-store.{self.namespace}.svc.cluster.local",
                         'LDMSD_AUTH_PLUGIN': auth_type,
                         'LDMSD_AUTH_SECRET': f"{auth_secret}",
@@ -186,84 +229,87 @@ class LdmsdManager:
                         'LDMSD_AUTH_OPTION': f"socket=/run/{auth_secret}/munge.socket",
                         'LDMSD_ALIAS': container_alias,
                         'LDMSD_CONF': f"/ldms_conf/ldmsd.nersc-ldms-store-{ldmsd_name}-{store_pod_index}.conf",
-                        'EXPORTER_PORT': 9101
+                        # 'EXPORTER_PORT': 9101  # DISABLED: Exporter functionality
                     })
+                    # Create environment file with pod name pattern for StatefulSet compatibility
+                    store_pod_name = f"nersc-ldms-store-{ldmsd_name}-{store_pod_index}"
+                    self.create_ldms_env(
+                        os.path.join(self.out_dir, f"ldms-env.{store_pod_name}.sh"),
+                        self.env[ldmsd_name]['store'][-1]
+                    )
+                    # Also create the original cluster-based name for backward compatibility
                     self.create_ldms_env(
                         os.path.join(self.out_dir, f"ldms-env.nersc-ldms-store-{ldmsd_name}-{store_pod_index}.sh"),
                         self.env[ldmsd_name]['store'][-1]
                     )
                     self.configmaps.extend([
                         os.path.join(self.out_dir, f"ldmsd.nersc-ldms-store-{ldmsd_name}-{store_pod_index}.conf"),
-                        os.path.join(self.out_dir, f"ldms-env.nersc-ldms-store-{ldmsd_name}-{store_pod_index}.sh")
+                        os.path.join(self.out_dir, f"ldms-env.nersc-ldms-store-{ldmsd_name}-{store_pod_index}.sh"),
+                        os.path.join(self.out_dir, f"ldms-env.{store_pod_name}.sh")
                     ])
                     store_pod_index += 1
 
     def make_config_stream(self, out_file):
-        """Make the ldmsd config file for the stream
-        This ldmsd must talk to the other aggregators via their service name, and respective ports
+        """Make the ldmsd config file for the stream.
+        This ldmsd must talk to the other aggregators via their service name, and respective ports.
         :param out_file: string path to output file
         """
         logging.info("Create Stream Config")
         if os.path.isfile(out_file):
-            logging.info(f"File already present: {out_file}")
+            logging.info("File already present: %s", out_file)
             return
         cfg = list()
-        #--------
-        # Get uniqe auth types
-        munge_auth_sec = set( v['auth_secret'] for k, v in self.config['node_types'].items())
+        munge_auth_sec = set(v['auth_secret'] for k, v in self.config['node_types'].items())
         for auth_secret in munge_auth_sec:
             cfg.extend([
                 f"auth_add name={auth_secret} plugin=munge socket=/run/{auth_secret}/munge.socket",
             ])
-        #--------
-        ldms_host = "nersc-ldms-aggr.sma.svc.cluster.local"
-        for k, v in self.env.items():  #  k: application, compute-cpu, compute-gpu, management
+        ldms_host = f"nersc-ldms-aggr.{self.namespace}.svc.cluster.local"
+        for k, v in self.env.items():
             if k == "stream":
                 continue
             for index, sub_list in enumerate(v['agg']):
-                ldmsd_name = f"{k}-{index}"   # e.g. compute-cpu-0
+                ldmsd_name = f"{k}-{index}"
                 ldmsd_port = sub_list['LDMSD_PORT']
                 auth_secret = sub_list['LDMSD_AUTH_SECRET']
-                auth_type = 'munge'
-                auth_arg = 'socket=/run/{auth_secret}/munge.socket'
-                logging.debug(f"ldmsd_name:{ldmsd_name} ldmsd_port:{ldmsd_port}, auth_type:{auth_type}, auth_arg:{auth_arg}, auth_secret:{auth_secret}")
                 cfg.extend([
-                    f"prdcr_add name=prdcr_{ldmsd_name} type=active interval=30000000 xprt=sock host={ldms_host} port={ldmsd_port} auth={auth_secret}",
+                    f"prdcr_add name=prdcr_{ldmsd_name} type=active interval=30000000 "
+                    f"xprt=sock host={ldms_host} port={ldmsd_port} auth={auth_secret}",
                 ])
         cfg.extend([
             "prdcr_start_regex regex=.*",
             "prdcr_subscribe stream=nersc regex=.*",
         ])
-        # To avoid reading metrics, and only handle streams make a pattern that will never match
         cfg.extend([
-            f"updtr_add name=stream interval=10000000 auto_interval=true  #(Honor hints if true)",
-            f"updtr_prdcr_add name=stream regex=prdcr.*",
-            f"updtr_match_add name=stream match=schema regex=(DONOTMATCH)"
-            f"updtr_start name=stream"
+            "updtr_add name=stream interval=10000000 auto_interval=true  #(Honor hints if true)",
+            "updtr_prdcr_add name=stream regex=prdcr.*",
+            "updtr_match_add name=stream match=schema regex=(DONOTMATCH)",
+            "updtr_start name=stream"
         ])
         cfg.extend([
             "#Log Stream data",
             "load name=hello_sampler",
-            "config name=hello_sampler producer=${HOSTNAME} instance=${HOSTNAME}/hello_sampler stream=nersc component_id=1",
+            "config name=hello_sampler producer=${HOSTNAME} "
+            "instance=${HOSTNAME}/hello_sampler stream=nersc component_id=1",
             "start name=hello_sampler interval=1000000 offset=0"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
-            title = "Wrote:"
-            logging.debug(f"{title:.<20} {out_file}")
 
     def make_stream_config(self):
+        """Generate stream configuration if enabled."""
         logging.info("Create Stream Config")
-        auth_type = self.config['stream'].get('auth_type')
-        auth_secret = self.config['stream'].get('auth_secret')
-        auth_secret_file = self.config['stream'].get('auth_secret_file')
+        stream_conf = self.config.get('stream', {})
+        auth_type = stream_conf.get('auth_type')
+        auth_secret = stream_conf.get('auth_secret')
+        auth_secret_file = stream_conf.get('auth_secret_file')
         if auth_type == "munge":
             ldms_auth_option = f"socket=/run/{auth_secret}/munge.socket"
         elif auth_type == "ovis":
             ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
         else:
-            logging.error(f"Unhandled auth_type. self.config: {self.config}")
-            raise
+            logging.error("Unhandled auth_type: %s", auth_type)
+            raise ValueError(f"Unhandled auth_type: {auth_type}")
         self.make_config_stream(
             out_file=os.path.join(self.out_dir, "ldmsd.nersc-ldms-stream-0.conf")
         )
@@ -273,7 +319,7 @@ class LdmsdManager:
             'LDMSD_HOST': f"nersc-ldms-stream-0.nersc-ldms-stream.{self.namespace}.svc.cluster.local",
             'LDMSD_AUTH_PLUGIN': auth_type,
             'LDMSD_AUTH_SECRET': f"{auth_secret}",
-            'LDMSD_AUTH_SECRET_FILE' : f"{auth_secret_file}",
+            'LDMSD_AUTH_SECRET_FILE': f"{auth_secret_file}",
             'LDMSD_AUTH_OPTION': ldms_auth_option,
             'LDMSD_CONF': "/ldms_conf/ldmsd.nersc-ldms-stream-0.conf",
             'EXPORTER_PORT': 9101,
@@ -288,6 +334,7 @@ class LdmsdManager:
         ])
 
     def make_exporter_configs(self):
+        """Generate exporter configuration if enabled."""
         logging.info("Create Exporter Config")
         expo = []
         for ntype, val in self.env.items():
@@ -298,7 +345,7 @@ class LdmsdManager:
                     'LDMSD_PORT': val[0]['LDMSD_PORT'],
                     'LDMSD_AUTH_PLUGIN': val[0]['LDMSD_AUTH_PLUGIN'],
                     'LDMSD_AUTH_SECRET': val[0]['LDMSD_AUTH_SECRET'],
-                    'LDMSD_AUTH_SECRET_FILE' : val[0]['LDMSD_AUTH_SECRET_FILE'],
+                    'LDMSD_AUTH_SECRET_FILE': val[0]['LDMSD_AUTH_SECRET_FILE'],
                     'LDMSD_AUTH_OPTION': val[0]['LDMSD_AUTH_OPTION'],
                     'EXPORTER_PORT': val[0]['EXPORTER_PORT']
                 })
@@ -336,20 +383,22 @@ class LdmsdManager:
 
     def create_env_json(self):
         """Write env data structure to JSON."""
-        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.json"), 'w') as fh:
+        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.json"), 'w',
+                  encoding='utf-8') as fh:
             json.dump(self.env, fh, ensure_ascii=False, sort_keys=True, indent=4)
 
     def create_env_yaml(self):
         """Write env data structure to YAML."""
         yaml.add_representer(str, str_presenter)
         yaml.representer.SafeRepresenter.add_representer(str, str_presenter)
-        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.yml"), 'w') as fh:
+        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.yml"), 'w',
+                  encoding='utf-8') as fh:
             #yaml.dump(self.env, fh, default_flow_style=False, sort_keys=False)
             yaml.dump(self.env, fh, default_flow_style=False)
 
     def create_ldms_env(self, out_file, data):
         """Create the env file used before running ldmsd."""
-        with open(out_file, "w") as fh:
+        with open(out_file, "w", encoding='utf-8') as fh:
             for k, v in data.items():
                 fh.write(f'export {k}="{v}"\n')
 
@@ -359,7 +408,7 @@ class LdmsdManager:
         for fname in files_list:
             base_fname = os.path.basename(fname)
             if not fname in data:
-                with open(fname) as fh:
+                with open(fname, encoding='utf-8') as fh:
                     data[base_fname] = fh.read()
         return data
 
@@ -374,14 +423,14 @@ class LdmsdManager:
         )
         script_files = [
             "scripts/ldmsd.bash",
-            "scripts/ldmsd_stream.bash",
             "scripts/ldms_ls.bash",
             "scripts/ldms_stats.bash",
-            "scripts/ldms_exporter.bash",
-            "scripts/ldms_exporter.py",
             "scripts/start_munge.bash",
-            "scripts/decomp.json"
+            "scripts/decomp.json",
+            "scripts/kafka.conf"
         ]
+        if self.enable_stream:
+            script_files.append("scripts/ldmsd_stream.bash")
         data = self.asseble_configmap_data(script_files)
         self.create_configmap_yaml(
             name="nersc-ldms-bin",
@@ -410,7 +459,7 @@ class LdmsdManager:
         }
         yaml.add_representer(str, str_presenter)
         yaml.representer.SafeRepresenter.add_representer(str, str_presenter)
-        with open(out_filename, 'w') as fh:
+        with open(out_filename, 'w', encoding='utf-8') as fh:
             #yaml.dump(configmap, fh, default_flow_style=False, sort_keys=False)
             yaml.dump(configmap, fh, default_flow_style=False)
 
@@ -419,10 +468,10 @@ class LdmsdManager:
         for i in range(0, len(input_list), group_size):
             yield input_list[i:i + group_size]
 
-    def make_config_agg(self, ldmsd_name, ldmsd_conf, nodes, out_file):
+    def make_config_agg(self, ldmsd_conf, nodes, out_file):
         """Make a new ldmsd config file for each aggregator."""
         if os.path.isfile(out_file):
-            logging.info(f"File already present: {out_file}")
+            logging.info("File already present: %s", out_file)
             return
         # auth data
         sampler = ldmsd_conf.get('sampler')
@@ -434,31 +483,54 @@ class LdmsdManager:
         elif auth_type == "ovis":
             ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
         else:
-            logging.error(f"auth_type:{auth_type}")
-            raise
+            logging.error("Unknown auth_type: %s", auth_type)
+            raise ValueError(f"Unknown auth_type: {auth_type}")
         cfg = []
         cfg.append(f"auth_add name={auth_secret} plugin={auth_type}  {ldms_auth_option}")
-        cfg.append(f"updtr_add name={ldmsd_conf['alias']} interval=10000000 auto_interval=true  #(Honor hints if true)")
+        cfg.append(
+            f"updtr_add name={ldmsd_conf['alias']} interval=10000000 "
+            "auto_interval=true  #(Honor hints if true)"
+        )
+        # Get sampler port from sampler configuration
+        sampler_port = sampler.get('port', 10001)
         for node in nodes:
             hsn_node_prefixes = ['nid', 'service', 'workflow', 'login']
             if any(node_prefix in node['hostname'] for node_prefix in hsn_node_prefixes):
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['hostaddr']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['hostaddr']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
             elif 'ncn-' in node['hostname']:
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['hostname']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['hostname']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
             else:
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['ip_address']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['ip_address']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
         cfg.append("prdcr_subscribe stream=nersc regex=.*")
         cfg.append("prdcr_start_regex regex=.*")
         cfg.append(f"updtr_prdcr_add name={ldmsd_conf['alias']} regex=.*")
-        cfg.append(f"updtr_match_add name={ldmsd_conf['alias']} match=schema regex=(procnetdev|procstat|vmstat|meminfo|lustre_llite|lustre2_client|loadavg|dcgm|dvs|proc_group|procdiskstats|slingshot_metrics|slingshot_info)")
+        cfg.append(
+            f"updtr_match_add name={ldmsd_conf['alias']} match=schema "
+            "regex=(procnetdev|procstat|vmstat|meminfo|lustre_llite|"
+            "lustre2_client|loadavg|dcgm|dvs|proc_group|procdiskstats|"
+            "slingshot_metrics|slingshot_info|slurm)"
+        )
         cfg.append(f"updtr_start name={ldmsd_conf['alias']}")
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
 
-    def make_config_store(self, ldmsd_name, ldmsd_agg_name, ldmsd_agg_port, ldmsd_conf, out_file, split=None):
+    def make_config_store(self, ldmsd_name, ldmsd_agg_name, ldmsd_agg_port,  # pylint: disable=too-many-arguments,too-many-positional-arguments
+                          ldmsd_conf, out_file, split=None):
         """Make a store ldmsd config file for each aggregator."""
         if os.path.isfile(out_file):
-            logging.debug(f"File already present: {out_file}")
+            logging.debug("File already present: %s", out_file)
             return
         # auth data
         auth_type = ldmsd_conf.get('auth_type')
@@ -468,6 +540,8 @@ class LdmsdManager:
             ldms_auth_option = f"socket=/run/{auth_secret}/munge.socket"
         elif auth_type == "ovis":
             ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
+        else:
+            ldms_auth_option = ""
 
         cfg = []
         cfg.append(f"auth_add name={ldmsd_name} plugin={auth_type} {ldms_auth_option}")
@@ -483,20 +557,26 @@ class LdmsdManager:
         cfg.append(f"updtr_start name={ldmsd_name}")
         cfg.append("prdcr_start_regex regex=.*")
         cfg.extend([
-            "# Store in kafka",
+            "# Store in Kafka - port 9093 (TLS with mTLS authentication)",
+            "# Uses kafkapump user certificates for mTLS authentication",
+            "# Security: TLS encryption + client certificate authentication",
+            "#   - TLS port 9093 requires valid client certificates",
+            "#   - kafkapump user certificates mounted at /ldms_certs/",
+            "#   - Kafka configuration file provides TLS settings",
             "load name=store_avro_kafka",
-            "config name=store_avro_kafka encoding=json topic=nersc-ldms",
-            f"strgp_add name=kafka regex=.* plugin=store_avro_kafka container=cluster-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092 decomposition=/ldms_bin/decomp.json",
+            "config name=store_avro_kafka encoding=json topic=ldms kafka_conf=/ldms_bin/kafka.conf",
+            f"strgp_add name=kafka regex=.* plugin=store_avro_kafka "
+            f"container=kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9093 "
+            "decomposition=/ldms_bin/decomp.json",
             "strgp_start name=kafka"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
-
-    def make_config_stream2(self, out_file):
+    def make_config_stream2(self, out_file):  # pylint: disable=too-many-locals
         """Make the ldmsd config file for the stream."""
         logging.info("Make Config: stream")
         if os.path.isfile(out_file):
-            logging.info(f"File already present: {out_file}")
+            logging.info("File already present: %s", out_file)
             return
         cfg = []
         #--------
@@ -509,6 +589,8 @@ class LdmsdManager:
                 ldms_auth_option = f"socket=/run/{auth_secret}/munge.socket"
             elif auth_type == "ovis":
                 ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
+            else:
+                ldms_auth_option = ""
 
             cfg.append(f"auth_add name={ldmsd_name} plugin={auth_type} {ldms_auth_option}")
             ldms_host = f"nersc-ldms-aggr.{self.namespace}.svc.cluster.local"
@@ -531,7 +613,7 @@ class LdmsdManager:
             "config name=hello_sampler producer=${HOSTNAME} instance=${HOSTNAME}/hello_sampler stream=nersc component_id=1",
             "start name=hello_sampler interval=1000000 offset=0"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
 
 if __name__ == '__main__':
@@ -543,8 +625,8 @@ if __name__ == '__main__':
         "--config", "-c", default="ldms_machine_config.json", help="Path to JSON config file"
     )
     args = parser.parse_args()
-    config = load_config(args.config)
-    verbose = args.verbose if args.verbose is not None else config.get("verbose", False)
+    main_config = load_config(args.config)
+    verbose = args.verbose if args.verbose is not None else main_config.get("verbose", False)
     setup_logging(verbose)
-    agg = LdmsdManager(config)
+    agg = LdmsdManager(main_config)
     agg.main()

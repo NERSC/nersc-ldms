@@ -1,4 +1,4 @@
 #!/bin/bash
 
-if [ ! -d "$
-cp host_map.r7525.json out_dir 
+if [ ! -d "out_dir" ]; then mkdir -p out_dir; fi
+cp host_map.slurm-cluster.json out_dir 

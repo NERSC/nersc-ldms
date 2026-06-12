@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Generate manifest for cluster specific variables"""
 
+import argparse
+import json
+import logging
 import os
 import sys
-import logging
+
 import yaml
-import json
-import argparse
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
@@ -135,13 +136,8 @@ def harvest_replica_info(map_file):
         store_stateful_replicas[key] = len(val.get('store', []))
         logging.info(f"Replica key: {key}, count: {store_stateful_replicas[key]}")
 
-    for ntype, v1 in rep_map.items():
-        if ntype == 'stream':
-            replicas_exporter += 1
-            continue
-        for ltype, v2 in v1.items():
-            replicas_exporter += len(v2)
-    logging.info(f"Total exporter replicas: {replicas_exporter}")
+    logging.info("Total exporter replicas: %s (computed later based on enable_exporter flag)",
+                 replicas_exporter)
 
     for ntype, val in rep_map.items():
         if ntype == 'stream':
@@ -157,11 +153,20 @@ def harvest_replica_info(map_file):
     return aggs, store_stateful_replicas, replicas_exporter
 
 def harvest_sys_config(sys_conf_path):
-    """Extract namespace, imagePullSecretsOption, and unique ldms auth info."""
+    """Extract namespace, imagePullSecretsOption, port config, feature flags, and unique ldms auth info."""
     sys_conf = load_json_file(sys_conf_path)
     sys_opts = sys_conf.get('sys_opts', {})
     namespace = sys_opts.get('namespace')
     img_pull_sec_opt = sys_opts.get('imagePullSecretsOption')
+    
+    # Extract LDMS port configuration directly from sys_opts
+    agg_port = sys_opts.get('agg_port', 6001)
+    store_port = sys_opts.get('store_port', 6001)
+
+    # Feature flags
+    enable_stream = sys_opts.get('enable_stream', False)
+    enable_exporter = sys_opts.get('enable_exporter', False)
+    
     mounts = {}
 
     for node_conf in sys_conf.get('node_types',{}).values():
@@ -178,22 +183,23 @@ def harvest_sys_config(sys_conf_path):
             if entry not in mounts[auth_type]:
                 mounts[auth_type].append(entry)
 
-    conf = sys_conf.get('stream', None)
-    if conf:
-        auth_type = conf.get('auth_type')
-        if auth_type:
-            entry = {
-                "auth_secret": conf.get("auth_secret"),
-                "auth_secret_file": conf.get("auth_secret_file")
-            }
-            if auth_type not in mounts:
-                mounts[auth_type] = []
-            if entry not in mounts[auth_type]:
-                mounts[auth_type].append(entry)
+    if enable_stream:
+        conf = sys_conf.get('stream', None)
+        if conf:
+            auth_type = conf.get('auth_type')
+            if auth_type:
+                entry = {
+                    "auth_secret": conf.get("auth_secret"),
+                    "auth_secret_file": conf.get("auth_secret_file")
+                }
+                if auth_type not in mounts:
+                    mounts[auth_type] = []
+                if entry not in mounts[auth_type]:
+                    mounts[auth_type].append(entry)
 
-    return namespace, img_pull_sec_opt, mounts
+    return namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, mounts
 
-def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, all_mounts):
+def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, agg_port, store_port, enable_stream, enable_exporter, all_mounts):
     
     charts = safe_get(manifest, ['spec', 'charts'], [])
     for x in charts:
@@ -234,6 +240,11 @@ def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, 
             if namespace is not None:
                 x['namespace'] = namespace
                 x['values']['namespace'] = namespace
+            
+            # Set store port configuration under store section
+            if 'store' not in x['values']:
+                x['values']['store'] = {}
+            x['values']['store']['port'] = store_port
 
             x['values']['authVolOption'] = []
             x['values']['authVolMountOption'] = []
@@ -279,7 +290,14 @@ def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, 
                                 }
                             )
                             
-            x['values']['statefulSet']['exporter'] = {'replicas': replicas_exporter}
+            # Feature flags
+            x['values']['enable_stream'] = enable_stream
+            x['values']['enable_exporter'] = enable_exporter
+
+            if enable_exporter:
+                x['values']['statefulSet']['exporter'] = {'replicas': replicas_exporter}
+            else:
+                x['values']['statefulSet']['exporter'] = {'replicas': 0}
             x['values']['statefulSet']['store'] = [{'name': k, 'replicas': v} for k, v in store_stateful_replicas.items()]
             x['values']['aggs'] = aggs
             logging.info("Manifest updated for nersc-ldms-aggr chart.")
@@ -293,10 +311,11 @@ def write_yaml_file(path, data, description=None):
         if description:
             logging.info(f"Wrote {description} to {path}")
     except Exception as e:
-        logging.error(f"Failed to write {description or 'YAML'} to {path}: {e}")
-        raise FailedManifestCreateException()
+        logging.error("Failed to write %s to %s: %s", description or 'YAML', path, e)
+        raise FailedManifestCreateException() from e
 
-def main():
+def main():  # pylint: disable=too-many-locals
+    """Main function to generate LDMS manifest and values.yaml."""
     parser = argparse.ArgumentParser(description="Generate manifest for cluster specific variables")
     parser.add_argument('--cluster-file', default="/etc/shasta.yml", help="Path to cluster YAML")
     parser.add_argument('--manifest-template', default="manifest.yaml.in", help="Path to manifest template YAML")
@@ -315,7 +334,7 @@ def main():
     sys_conf = os.path.join(here, args.sys_conf)
     values_output_file = os.path.join(here, args.values_output)
 
-    logging.info(f"JOB: Generate manifest: {manifest_output_file}")
+    logging.info("JOB: Generate manifest: %s", manifest_output_file)
 
     # Step 1: Cluster info and vars file
     net_vars = None
@@ -326,15 +345,15 @@ def main():
         try:
             net_vars = harvest_network_vars(vars_file)
         except FileNotFoundError:
-            logging.warning(f"Vars file {vars_file} not found. Skipping population of network variables.")
+            logging.warning("Vars file %s not found. Skipping population of network variables.", vars_file)
     except FileNotFoundError:
-        logging.warning(f"Cluster file {cluster_file} not found. Skipping population of network variables.")
+        logging.warning("Cluster file %s not found. Skipping population of network variables.", cluster_file)
 
     # Step 2: Replica info
     aggs, store_stateful_replicas, replicas_exporter = harvest_replica_info(replica_map_file)
 
     # Step 3: System config
-    namespace, img_pull_sec_opt, all_mounts = harvest_sys_config(sys_conf)
+    namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts = harvest_sys_config(sys_conf)
 
     # Step 4: Load manifest template
     manifest = load_yaml_file(manifest_template_file)
@@ -343,7 +362,7 @@ def main():
         raise NoManifestTemplateException()
 
     # Step 5: Update manifest
-    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, all_mounts)
+    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts)
 
     # Step 6: Write manifest.yaml
     write_yaml_file(manifest_output_file, manifest, description="manifest")
@@ -366,7 +385,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception as e:
-        logging.critical(f"Fatal error: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.critical("Fatal error: %s", e)
         sys.exit(1)
 

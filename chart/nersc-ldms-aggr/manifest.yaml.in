@@ -12,14 +12,8 @@ spec:
           registry: registry.local
           repository: /nersc/ubuntu-ldms-agg
           tag: 20250804T0856
-        pollingInterval: "60s"
-        exporterPort: 9101
-        scrapeTimeout: "45s"
-        exportLabel:
-          export: ldms-metrics
-        statefulSet:
-          exporter:
-            replicas: 0
+        enable_stream: false
+        enable_exporter: false
         net_atat_def: null
         stream:
           resources:

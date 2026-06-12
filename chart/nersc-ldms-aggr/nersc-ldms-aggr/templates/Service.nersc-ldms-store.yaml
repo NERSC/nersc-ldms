@@ -9,6 +9,6 @@ spec:
   clusterIP: None
   ports:
     - protocol: TCP
-      port: 6001
-      targetPort: 6001
+      port: {{ .Values.store.port }}
+      targetPort: {{ .Values.store.port }}
 

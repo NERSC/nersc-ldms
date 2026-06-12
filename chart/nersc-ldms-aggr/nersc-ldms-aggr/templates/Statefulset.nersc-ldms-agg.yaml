@@ -27,7 +27,7 @@ spec:
       containers:
         {{- range .Values.aggs }}
         - name: {{ .name }}
-          image: {{ $.Values.image.registry }}{{ $.Values.image.repository }}:{{ $.Values.image.tag | toString }}
+          image: {{ $.Values.image.registry }}{{ $.Values.image.repository }}:{{ $.Values.image.tag }}
           imagePullPolicy: IfNotPresent
           args:
             - /bin/bash

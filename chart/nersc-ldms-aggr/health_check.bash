@@ -5,7 +5,7 @@ function pause {
   echo "press enter to continue"
   read foo
 }
-NAMESPACE="telem"
+NAMESPACE="telemetry"
 echo "===================================
 [>>] TEST: Check PODS: kubectl -n $NAMESPACE get pods |grep nersc |sort -n "
 pause

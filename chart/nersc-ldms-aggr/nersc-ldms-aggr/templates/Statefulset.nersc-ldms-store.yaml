@@ -22,7 +22,7 @@ spec:
       containers:
         - name: store
           {{- with $.Values.image }}
-          image: {{ .registry }}{{ .repository }}:{{ .tag | toString }}
+          image: {{ .registry }}{{ .repository }}:{{ .tag }}
           {{- end }}
           imagePullPolicy: IfNotPresent
           args:
@@ -47,6 +47,9 @@ spec:
               mountPath: /ldms_conf
             - name: ldms-bin
               mountPath: /ldms_bin
+            - name: kafkapump-certs
+              mountPath: /ldms_certs
+              readOnly: true
 {{- if $.Values.authVolMountOption }}
 {{- toYaml $.Values.authVolMountOption | nindent 12 }}
 {{- end }}
@@ -75,6 +78,21 @@ spec:
           configMap:
             name: nersc-ldms-bin
             defaultMode: 0500
+        - name: kafkapump-certs
+          projected:
+            sources:
+              - secret:
+                  name: kafka-cluster-ca-cert
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - secret:
+                  name: kafkapump
+                  items:
+                    - key: user.crt
+                      path: user.crt
+                    - key: user.key
+                      path: user.key
 {{- if $.Values.authVolOption }}
 {{ toYaml $.Values.authVolOption | nindent 8 }}
 {{- end }}
