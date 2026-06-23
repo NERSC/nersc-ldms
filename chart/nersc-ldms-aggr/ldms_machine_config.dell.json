@@ -2,6 +2,8 @@
   "sys_opts": {
     "system" : "dell",
     "namespace": "telem",
+    "enable_kafka_mtls": false,
+    "kafka_tls_secret": "ldms-kafka-tls",
     "imagePullSecretsOption": {
       "imagePullSecrets": [
           {"name": "registry-auth-token"}

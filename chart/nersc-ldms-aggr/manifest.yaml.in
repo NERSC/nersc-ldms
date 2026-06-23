@@ -20,6 +20,7 @@ spec:
         statefulSet:
           exporter:
             replicas: 0
+        enable_kafka_mtls: false
         net_atat_def: null
         stream:
           resources:

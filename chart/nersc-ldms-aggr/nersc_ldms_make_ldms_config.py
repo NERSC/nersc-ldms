@@ -42,6 +42,10 @@ class LdmsdManager:
         self.configmaps = []
         self.ldmsd_port = 6000
 
+        # Kafka mTLS configuration
+        self.enable_kafka_mtls = self.config['sys_opts'].get('enable_kafka_mtls', False)
+        self.kafka_tls_secret = self.config['sys_opts'].get('kafka_tls_secret', 'ldms-kafka-tls')
+
     def main(self):
         """Main loop."""
         now = time.strftime("%Y%m%d-%H%M%S", time.localtime())
@@ -382,6 +386,8 @@ class LdmsdManager:
             "scripts/start_munge.bash",
             "scripts/decomp.json"
         ]
+        if self.enable_kafka_mtls:
+            script_files.append("scripts/kafka.conf")
         data = self.asseble_configmap_data(script_files)
         self.create_configmap_yaml(
             name="nersc-ldms-bin",
@@ -485,10 +491,22 @@ class LdmsdManager:
         cfg.extend([
             "# Store in kafka",
             "load name=store_avro_kafka",
-            "config name=store_avro_kafka encoding=json topic=nersc-ldms",
-            f"strgp_add name=kafka regex=.* plugin=store_avro_kafka container=cluster-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092 decomposition=/ldms_bin/decomp.json",
-            "strgp_start name=kafka"
         ])
+        if self.enable_kafka_mtls:
+            cfg.append("config name=store_avro_kafka encoding=json topic=ldms kafka_conf=/ldms_bin/kafka.conf")
+            cfg.append(
+                f"strgp_add name=kafka regex=.* plugin=store_avro_kafka "
+                f"container=kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9093 "
+                "decomposition=/ldms_bin/decomp.json"
+            )
+        else:
+            cfg.append("config name=store_avro_kafka encoding=json topic=nersc-ldms")
+            cfg.append(
+                f"strgp_add name=kafka regex=.* plugin=store_avro_kafka "
+                f"container=cluster-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092 "
+                "decomposition=/ldms_bin/decomp.json"
+            )
+        cfg.append("strgp_start name=kafka")
         with open(out_file, 'w') as fh:
             fh.write('\n'.join(cfg))
 
