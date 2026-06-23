@@ -20,6 +20,8 @@ spec:
         statefulSet:
           exporter:
             replicas: 0
+        enable_stream: true
+        enable_exporter: true
         net_atat_def: null
         stream:
           resources:

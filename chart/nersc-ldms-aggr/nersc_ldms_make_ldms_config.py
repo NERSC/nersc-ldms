@@ -42,14 +42,26 @@ class LdmsdManager:
         self.configmaps = []
         self.ldmsd_port = 6000
 
+        # Feature flags for optional components
+        self.enable_stream = self.config['sys_opts'].get('enable_stream', True)
+        self.enable_exporter = self.config['sys_opts'].get('enable_exporter', True)
+
+        logging.info(f"  Feature flags: enable_stream={self.enable_stream}, enable_exporter={self.enable_exporter}")
+
     def main(self):
         """Main loop."""
         now = time.strftime("%Y%m%d-%H%M%S", time.localtime())
         logging.info(f"BEGIN LDMS Make LDMS Config: {now}")
         self.make_agg_configs()
         self.make_store_configs()
-        self.make_stream_config()
-        self.make_exporter_configs()
+        if self.enable_stream:
+            self.make_stream_config()
+        else:
+            logging.info("Stream config DISABLED (enable_stream=false)")
+        if self.enable_exporter:
+            self.make_exporter_configs()
+        else:
+            logging.info("Exporter config DISABLED (enable_exporter=false)")
         self.make_munge_configs()
         self.create_env_json()
         self.create_env_yaml()
