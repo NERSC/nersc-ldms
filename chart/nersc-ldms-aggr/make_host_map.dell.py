@@ -32,9 +32,8 @@ def load_config(config_path):
 class LdmsdManager:
     """Generate ldmsd config and params."""
 
-    def __init__(self, config=None, host_map_file="host_map.r7525.json"):
+    def __init__(self, config=None):
         self.config = config
-        self.host_map_file = host_map_file
         self.base_dir = os.path.dirname(os.path.realpath(__file__))
         self.out_dir = os.path.join(self.base_dir, "out_dir")
 
@@ -49,8 +48,14 @@ class LdmsdManager:
             shutil.rmtree(self.out_dir)
         os.makedirs(self.out_dir, exist_ok=True)
    
-        # PLACE HOLDER: just copy the example file for now
-        shutil.copy(self.host_map_file, self.out_dir)
+        # Copy host_map files for each node type from config
+        for ntype in self.config.get('node_types', {}):
+            host_map_file = f"host_map.{ntype}.json"
+            if os.path.isfile(host_map_file):
+                logging.info(f"Copying host map: {host_map_file} -> {self.out_dir}")
+                shutil.copy(host_map_file, self.out_dir)
+            else:
+                logging.warning(f"Host map file not found: {host_map_file}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -64,18 +69,13 @@ def main():
         default='ldms_machine_config.json',
         help="Path to JSON config file"
     )
-    parser.add_argument(
-        "--host-map",
-        default='host_map.r7525.json',
-        help="Path to host map JSON file (default: host_map.r7525.json)"
-    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     verbose = args.verbose if args.verbose is not None else config.get("verbose", False)
     setup_logging(verbose)
 
-    agg = LdmsdManager(config, host_map_file=args.host_map)
+    agg = LdmsdManager(config)
     agg.main()
 
 if __name__ == '__main__':
