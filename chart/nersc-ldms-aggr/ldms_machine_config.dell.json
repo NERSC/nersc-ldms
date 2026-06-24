@@ -2,6 +2,7 @@
   "sys_opts": {
     "system" : "dell",
     "namespace": "telem",
+    "host_map_provider": "dell",
     "imagePullSecretsOption": {
       "imagePullSecrets": [
           {"name": "registry-auth-token"}

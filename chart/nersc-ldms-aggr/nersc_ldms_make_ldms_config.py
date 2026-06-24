@@ -21,7 +21,7 @@ def load_config(config_path):
     """Load JSON config file from a given file path."""
     if not os.path.exists(config_path):
         return {}
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def str_presenter(dumper, data):
@@ -84,7 +84,7 @@ class LdmsdManager:
             config_lines = []
             for key, value in munge_conf.items():
                 config_lines.append(f'export {key}="{value}"')
-            with open(os.path.join(self.out_dir, conf_file_name), "w") as f:
+            with open(os.path.join(self.out_dir, conf_file_name), "w", encoding='utf-8') as f:
                 f.write("\n".join(config_lines))
             self.configmaps.extend([ 
                 os.path.join(self.out_dir, conf_file_name)
@@ -104,20 +104,19 @@ class LdmsdManager:
                 ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
             
             host_map_file = ldmsd_conf["host_map_file"]
-            with open(host_map_file) as fh:
+            with open(host_map_file, encoding='utf-8') as fh:
                 node_list = json.load(fh)
             split = ldmsd_conf.get("agg_count", 1)
             midpoint = len(node_list) // split
             for index, sub_list in enumerate(self.split_list(node_list, midpoint)):
                 sub_host_map_file = host_map_file.replace(".json", f"-{index}.json")
-                with open(sub_host_map_file, 'w') as fh:
+                with open(sub_host_map_file, 'w', encoding='utf-8') as fh:
                     json.dump(sub_list, fh, ensure_ascii=False, indent=4)
                 self.ldmsd_port += 1
                 alias_base = ldmsd_conf.get("alias", "other")
                 container_alias = f"{alias_base}-{index}"
                 logging.info(f"\tSPLIT: container_alias: {container_alias}, index: {index}, len sub_list: {len(sub_list)}")
                 self.make_config_agg(
-                    ldmsd_name=ldmsd_name,
                     ldmsd_conf=ldmsd_conf,
                     nodes=sub_list,
                     out_file=os.path.join(self.out_dir, f"ldmsd.nersc-ldms-aggr.{ldmsd_name}-{index}.conf")
@@ -158,7 +157,7 @@ class LdmsdManager:
             store_pod_index = 0
             host_map_file = ldmsd_conf["host_map_file"]
             for agg_index in range(len(self.env[ldmsd_name]['agg'])):
-                with open(host_map_file.replace(".json", f"-{agg_index}.json")) as fh:
+                with open(host_map_file.replace(".json", f"-{agg_index}.json"), encoding='utf-8') as fh:
                     node_list = json.load(fh)
                 nid_names = [x['hostname'] for x in node_list]
                 split = ldmsd_conf.get("store_split", 99999999)
@@ -247,7 +246,7 @@ class LdmsdManager:
             "config name=hello_sampler producer=${HOSTNAME} instance=${HOSTNAME}/hello_sampler stream=nersc component_id=1",
             "start name=hello_sampler interval=1000000 offset=0"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
             title = "Wrote:"
             logging.debug(f"{title:.<20} {out_file}")
@@ -336,20 +335,20 @@ class LdmsdManager:
 
     def create_env_json(self):
         """Write env data structure to JSON."""
-        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.json"), 'w') as fh:
+        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.json"), 'w', encoding='utf-8') as fh:
             json.dump(self.env, fh, ensure_ascii=False, sort_keys=True, indent=4)
 
     def create_env_yaml(self):
         """Write env data structure to YAML."""
         yaml.add_representer(str, str_presenter)
         yaml.representer.SafeRepresenter.add_representer(str, str_presenter)
-        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.yml"), 'w') as fh:
+        with open(os.path.join(self.out_dir, "nersc-ldmsd-port-map.yml"), 'w', encoding='utf-8') as fh:
             #yaml.dump(self.env, fh, default_flow_style=False, sort_keys=False)
             yaml.dump(self.env, fh, default_flow_style=False)
 
     def create_ldms_env(self, out_file, data):
         """Create the env file used before running ldmsd."""
-        with open(out_file, "w") as fh:
+        with open(out_file, "w", encoding='utf-8') as fh:
             for k, v in data.items():
                 fh.write(f'export {k}="{v}"\n')
 
@@ -359,7 +358,7 @@ class LdmsdManager:
         for fname in files_list:
             base_fname = os.path.basename(fname)
             if not fname in data:
-                with open(fname) as fh:
+                with open(fname, encoding='utf-8') as fh:
                     data[base_fname] = fh.read()
         return data
 
@@ -410,7 +409,7 @@ class LdmsdManager:
         }
         yaml.add_representer(str, str_presenter)
         yaml.representer.SafeRepresenter.add_representer(str, str_presenter)
-        with open(out_filename, 'w') as fh:
+        with open(out_filename, 'w', encoding='utf-8') as fh:
             #yaml.dump(configmap, fh, default_flow_style=False, sort_keys=False)
             yaml.dump(configmap, fh, default_flow_style=False)
 
@@ -419,7 +418,7 @@ class LdmsdManager:
         for i in range(0, len(input_list), group_size):
             yield input_list[i:i + group_size]
 
-    def make_config_agg(self, ldmsd_name, ldmsd_conf, nodes, out_file):
+    def make_config_agg(self, ldmsd_conf, nodes, out_file):
         """Make a new ldmsd config file for each aggregator."""
         if os.path.isfile(out_file):
             logging.info(f"File already present: {out_file}")
@@ -434,28 +433,51 @@ class LdmsdManager:
         elif auth_type == "ovis":
             ldms_auth_option = f"conf=/{auth_secret}/{auth_secret_file}"
         else:
-            logging.error(f"auth_type:{auth_type}")
-            raise
+            logging.error(f"Unknown auth_type: {auth_type}")
+            raise ValueError(f"Unknown auth_type: {auth_type}")
         cfg = []
         cfg.append(f"auth_add name={auth_secret} plugin={auth_type}  {ldms_auth_option}")
-        cfg.append(f"updtr_add name={ldmsd_conf['alias']} interval=10000000 auto_interval=true  #(Honor hints if true)")
+        cfg.append(
+            f"updtr_add name={ldmsd_conf['alias']} interval=10000000 "
+            "auto_interval=true  #(Honor hints if true)"
+        )
+        # Get sampler port from sampler configuration
+        sampler_port = sampler.get('port', 10001)
         for node in nodes:
             hsn_node_prefixes = ['nid', 'service', 'workflow', 'login']
             if any(node_prefix in node['hostname'] for node_prefix in hsn_node_prefixes):
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['hostaddr']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['hostaddr']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
             elif 'ncn-' in node['hostname']:
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['hostname']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['hostname']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
             else:
-                cfg.append(f"prdcr_add name={node['hostname']} host={node['ip_address']} type=active xprt=sock port={sampler['port']} interval=60000000 auth={auth_secret}")
+                cfg.append(
+                    f"prdcr_add name={node['hostname']} host={node['ip_address']} "
+                    f"type=active xprt=sock port={sampler_port} "
+                    f"interval=60000000 auth={auth_secret}"
+                )
         cfg.append("prdcr_subscribe stream=nersc regex=.*")
         cfg.append("prdcr_start_regex regex=.*")
         cfg.append(f"updtr_prdcr_add name={ldmsd_conf['alias']} regex=.*")
-        cfg.append(f"updtr_match_add name={ldmsd_conf['alias']} match=schema regex=(procnetdev|procstat|vmstat|meminfo|lustre_llite|lustre2_client|loadavg|dcgm|dvs|proc_group|procdiskstats|slingshot_metrics|slingshot_info)")
+        cfg.append(
+            f"updtr_match_add name={ldmsd_conf['alias']} match=schema "
+            "regex=(procnetdev|procstat|vmstat|meminfo|lustre_llite|"
+            "lustre2_client|loadavg|dcgm|dvs|proc_group|procdiskstats|"
+            "slingshot_metrics|slingshot_info|slurm)"
+        )
         cfg.append(f"updtr_start name={ldmsd_conf['alias']}")
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
 
-    def make_config_store(self, ldmsd_name, ldmsd_agg_name, ldmsd_agg_port, ldmsd_conf, out_file, split=None):
+    def make_config_store(self, ldmsd_name, ldmsd_agg_name, ldmsd_agg_port,  # pylint: disable=too-many-arguments,too-many-positional-arguments
+                          ldmsd_conf, out_file, split=None):
         """Make a store ldmsd config file for each aggregator."""
         if os.path.isfile(out_file):
             logging.debug(f"File already present: {out_file}")
@@ -489,7 +511,7 @@ class LdmsdManager:
             f"strgp_add name=kafka regex=.* plugin=store_avro_kafka container=cluster-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092 decomposition=/ldms_bin/decomp.json",
             "strgp_start name=kafka"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
 
     def make_config_stream2(self, out_file):
@@ -531,7 +553,7 @@ class LdmsdManager:
             "config name=hello_sampler producer=${HOSTNAME} instance=${HOSTNAME}/hello_sampler stream=nersc component_id=1",
             "start name=hello_sampler interval=1000000 offset=0"
         ])
-        with open(out_file, 'w') as fh:
+        with open(out_file, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(cfg))
 
 if __name__ == '__main__':
