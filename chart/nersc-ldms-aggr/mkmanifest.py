@@ -157,11 +157,16 @@ def harvest_replica_info(map_file):
     return aggs, store_stateful_replicas, replicas_exporter
 
 def harvest_sys_config(sys_conf_path):
-    """Extract namespace, imagePullSecretsOption, and unique ldms auth info."""
+    """Extract namespace, imagePullSecretsOption, port config, and unique ldms auth info."""
     sys_conf = load_json_file(sys_conf_path)
     sys_opts = sys_conf.get('sys_opts', {})
     namespace = sys_opts.get('namespace')
     img_pull_sec_opt = sys_opts.get('imagePullSecretsOption')
+
+    # Extract LDMS port configuration directly from sys_opts
+    agg_port = sys_opts.get('agg_port', 6001)
+    store_port = sys_opts.get('store_port', 6001)
+
     mounts = {}
 
     for node_conf in sys_conf.get('node_types',{}).values():
@@ -191,9 +196,9 @@ def harvest_sys_config(sys_conf_path):
             if entry not in mounts[auth_type]:
                 mounts[auth_type].append(entry)
 
-    return namespace, img_pull_sec_opt, mounts
+    return namespace, img_pull_sec_opt, agg_port, store_port, mounts
 
-def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, all_mounts):
+def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, agg_port, store_port, all_mounts):
     
     charts = safe_get(manifest, ['spec', 'charts'], [])
     for x in charts:
@@ -234,6 +239,11 @@ def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, 
             if namespace is not None:
                 x['namespace'] = namespace
                 x['values']['namespace'] = namespace
+
+            # Set store port configuration
+            if 'store' not in x['values']:
+                x['values']['store'] = {}
+            x['values']['store']['port'] = store_port
 
             x['values']['authVolOption'] = []
             x['values']['authVolMountOption'] = []
@@ -334,7 +344,7 @@ def main():
     aggs, store_stateful_replicas, replicas_exporter = harvest_replica_info(replica_map_file)
 
     # Step 3: System config
-    namespace, img_pull_sec_opt, all_mounts = harvest_sys_config(sys_conf)
+    namespace, img_pull_sec_opt, agg_port, store_port, all_mounts = harvest_sys_config(sys_conf)
 
     # Step 4: Load manifest template
     manifest = load_yaml_file(manifest_template_file)
@@ -343,7 +353,7 @@ def main():
         raise NoManifestTemplateException()
 
     # Step 5: Update manifest
-    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, all_mounts)
+    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, agg_port, store_port, all_mounts)
 
     # Step 6: Write manifest.yaml
     write_yaml_file(manifest_output_file, manifest, description="manifest")

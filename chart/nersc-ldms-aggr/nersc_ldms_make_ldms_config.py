@@ -40,7 +40,16 @@ class LdmsdManager:
         self.out_dir = os.path.join(self.base_dir, "out_dir")
         self.env = {}
         self.configmaps = []
-        self.ldmsd_port = 6000
+
+        # Port configuration from sys_opts (defaults match original hardcoded values)
+        self.agg_port = self.config['sys_opts'].get('agg_port', 6001)
+        self.store_port = self.config['sys_opts'].get('store_port', 6001)
+
+        # Initialize to agg_port - 1 because make_agg_configs increments before use
+        self.ldmsd_port = self.agg_port - 1
+
+        logging.info(f"  Aggregator ports start from: {self.agg_port}")
+        logging.info(f"  Store port: {self.store_port}")
 
     def main(self):
         """Main loop."""
@@ -177,7 +186,7 @@ class LdmsdManager:
                         split=split_regex
                     )
                     self.env.setdefault(ldmsd_name, {}).setdefault('store', []).append({
-                        'LDMSD_PORT': 6001,
+                        'LDMSD_PORT': self.store_port,
                         'LDMSD_HOST': f"nersc-ldms-store-{ldmsd_name}-{store_pod_index}.nersc-ldms-store.{self.namespace}.svc.cluster.local",
                         'LDMSD_AUTH_PLUGIN': auth_type,
                         'LDMSD_AUTH_SECRET': f"{auth_secret}",

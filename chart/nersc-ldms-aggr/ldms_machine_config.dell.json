@@ -3,6 +3,8 @@
     "system" : "dell",
     "namespace": "telem",
     "host_map_provider": "dell",
+    "agg_port": 6001,
+    "store_port": 6001,
     "imagePullSecretsOption": {
       "imagePullSecrets": [
           {"name": "registry-auth-token"}
