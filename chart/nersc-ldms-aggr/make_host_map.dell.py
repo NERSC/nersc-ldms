@@ -32,8 +32,9 @@ def load_config(config_path):
 class LdmsdManager:
     """Generate ldmsd config and params."""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, host_map_file="host_map.r7525.json"):
         self.config = config
+        self.host_map_file = host_map_file
         self.base_dir = os.path.dirname(os.path.realpath(__file__))
         self.out_dir = os.path.join(self.base_dir, "out_dir")
 
@@ -49,7 +50,7 @@ class LdmsdManager:
         os.makedirs(self.out_dir, exist_ok=True)
    
         # PLACE HOLDER: just copy the example file for now
-        shutil.copy("host_map.r7525.json", self.out_dir)
+        shutil.copy(self.host_map_file, self.out_dir)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -63,13 +64,18 @@ def main():
         default='ldms_machine_config.json',
         help="Path to JSON config file"
     )
+    parser.add_argument(
+        "--host-map",
+        default='host_map.r7525.json',
+        help="Path to host map JSON file (default: host_map.r7525.json)"
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     verbose = args.verbose if args.verbose is not None else config.get("verbose", False)
     setup_logging(verbose)
 
-    agg = LdmsdManager(config)
+    agg = LdmsdManager(config, host_map_file=args.host_map)
     agg.main()
 
 if __name__ == '__main__':
