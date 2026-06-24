@@ -2,6 +2,8 @@
   "sys_opts": {
     "system" : "dell",
     "namespace": "telem",
+    "agg_port": 6001,
+    "store_port": 6001,
     "imagePullSecretsOption": {
       "imagePullSecrets": [
           {"name": "registry-auth-token"}
