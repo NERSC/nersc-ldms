@@ -1,3 +1,4 @@
+{{- if .Values.enable_exporter }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -17,3 +18,4 @@ spec:
   - interval: {{ .Values.pollingInterval }}
     port: metrics
     scrapeTimeout: {{ .Values.scrapeTimeout }}
+{{- end }}
