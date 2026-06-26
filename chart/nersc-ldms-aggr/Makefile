@@ -23,12 +23,15 @@ out_dir/cm.nersc-ldms-conf.yaml: out_dir/.generated
 out_dir/nersc-ldmsd-port-map.json: out_dir/.generated
 
 # Marker target to run the init scripts only once
+# Host map provider is determined by sys_opts.host_map_provider in ldms_machine_config.json
+# Default: dell. Set to "csm" for CSM-based host map generation.
 out_dir/.generated:
-	@if ! grep -q dell ldms_machine_config.json; then \
-		echo "Running make_host_map.csm.py ('dell'  not found)"; \
+	@HOST_MAP_PROVIDER=$$(python3 -c "import json; c=json.load(open('ldms_machine_config.json')); print(c.get('sys_opts',{}).get('host_map_provider','dell'))" 2>/dev/null || echo "dell"); \
+	if [ "$$HOST_MAP_PROVIDER" = "csm" ]; then \
+		echo "Running make_host_map.csm.py (host_map_provider=csm)"; \
 		./make_host_map.csm.py --config=ldms_machine_config.json; \
 	else \
-		echo "Running ./make_host_map.dell.py ('dell' found)"; \
+		echo "Running ./make_host_map.dell.py (host_map_provider=dell)"; \
 		./make_host_map.dell.py --config=ldms_machine_config.json; \
 	fi
 	echo "Running ./nersc_ldms_make_ldms_config.py --config=ldms_machine_config.json"; \
