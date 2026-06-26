@@ -1,3 +1,4 @@
+{{- if .Values.enable_stream }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -87,4 +88,5 @@ spec:
             defaultMode: 0500
 {{- if .Values.authVolOption }}
 {{ toYaml .Values.authVolOption | nindent 8 }}
+{{- end }}
 {{- end }}

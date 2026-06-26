@@ -1,0 +1,10 @@
+# Generated files
+chart/nersc-ldms-aggr/manifest.yaml
+chart/nersc-ldms-aggr/values.yaml
+chart/nersc-ldms-aggr/out_dir/
+chart/nersc-ldms-aggr/nersc-ldms-aggr/templates/cm.nersc-ldms-bin.yaml
+chart/nersc-ldms-aggr/nersc-ldms-aggr/templates/cm.nersc-ldms-conf.yaml
+
+# Config/secrets
+chart/nersc-ldms-aggr/ldms_machine_config.json
+oci/build_auth/.git-credentials
