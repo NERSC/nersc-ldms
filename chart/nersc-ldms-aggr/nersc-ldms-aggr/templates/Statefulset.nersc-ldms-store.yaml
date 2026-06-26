@@ -22,7 +22,7 @@ spec:
       containers:
         - name: store
           {{- with $.Values.image }}
-          image: {{ .registry }}{{ .repository }}:{{ .tag }}
+          image: {{ .registry }}{{ .repository }}:{{ .tag | toString }}
           {{- end }}
           imagePullPolicy: IfNotPresent
           args:
