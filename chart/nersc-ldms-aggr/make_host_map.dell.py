@@ -48,8 +48,14 @@ class LdmsdManager:
             shutil.rmtree(self.out_dir)
         os.makedirs(self.out_dir, exist_ok=True)
    
-        # PLACE HOLDER: just copy the example file for now
-        shutil.copy("host_map.r7525.json", self.out_dir)
+        # Copy host_map files for each node type from config
+        for ntype in self.config.get('node_types', {}):
+            host_map_file = f"host_map.{ntype}.json"
+            if os.path.isfile(host_map_file):
+                logging.info(f"Copying host map: {host_map_file} -> {self.out_dir}")
+                shutil.copy(host_map_file, self.out_dir)
+            else:
+                logging.warning(f"Host map file not found: {host_map_file}")
 
 def main():
     parser = argparse.ArgumentParser()

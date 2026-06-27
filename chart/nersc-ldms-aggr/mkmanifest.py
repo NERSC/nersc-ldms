@@ -105,7 +105,7 @@ def harvest_network_vars(vars_file):
         omni_network_prefix = allvars['omni_network_prefix']
     except KeyError as e:
         logging.error(f"Missing expected key in vars file: {e}")
-        raise NoIPException()
+        raise NoIPException() from e
     logging.debug(
         "NetworkAttachDefinition debug\n"
         f"ldms_agg_ip_hsn: {ldms_agg_ip_hsn}, hsn_network_prefix: {hsn_network_prefix}, "
@@ -342,7 +342,7 @@ def write_yaml_file(path, data, description=None):
             logging.info(f"Wrote {description} to {path}")
     except Exception as e:
         logging.error(f"Failed to write {description or 'YAML'} to {path}: {e}")
-        raise FailedManifestCreateException()
+        raise FailedManifestCreateException() from e
 
 def main():
     parser = argparse.ArgumentParser(description="Generate manifest for cluster specific variables")

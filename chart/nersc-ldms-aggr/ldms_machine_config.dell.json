@@ -4,6 +4,7 @@
     "namespace": "telem",
     "enable_kafka_mtls": false,
     "kafka_tls_secret": "ldms-kafka-tls",
+    "host_map_provider": "dell",
     "enable_stream": false,
     "enable_exporter": false,
     "agg_port": 6001,
