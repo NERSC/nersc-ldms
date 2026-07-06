@@ -202,9 +202,13 @@ def harvest_sys_config(sys_conf_path):
                 if entry not in mounts[auth_type]:
                     mounts[auth_type].append(entry)
 
-    return namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, mounts
+    # Kafka mTLS configuration
+    enable_kafka_mtls = sys_opts.get('enable_kafka_mtls', False)
+    kafka_tls_secret = sys_opts.get('kafka_tls_secret', 'ldms-kafka-tls')
 
-def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, agg_port, store_port, enable_stream, enable_exporter, all_mounts):
+    return namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, mounts, enable_kafka_mtls, kafka_tls_secret
+
+def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_opts, agg_port, store_port, enable_stream, enable_exporter, all_mounts, enable_kafka_mtls=False, kafka_tls_secret='ldms-kafka-tls'):
     
     charts = safe_get(manifest, ['spec', 'charts'], [])
     for x in charts:
@@ -295,6 +299,27 @@ def update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, 
                                 }
                             )
                             
+            # Kafka mTLS volume mounts
+            x['values']['enable_kafka_mtls'] = enable_kafka_mtls
+            if enable_kafka_mtls:
+                x['values']['kafkaTlsVolMountOption'] = [
+                    {
+                        'mountPath': '/ldms_certs',
+                        'name': 'ldms-kafka-tls',
+                        'readOnly': True
+                    }
+                ]
+                x['values']['kafkaTlsVolOption'] = [
+                    {
+                        'name': 'ldms-kafka-tls',
+                        'secret': {
+                            'secretName': kafka_tls_secret,
+                            'defaultMode': '0o400'
+                        }
+                    }
+                ]
+
+            x['values']['statefulSet']['exporter'] = {'replicas': replicas_exporter}
             # Feature flags
             x['values']['enable_stream'] = enable_stream
             x['values']['enable_exporter'] = enable_exporter
@@ -357,7 +382,7 @@ def main():
     aggs, store_stateful_replicas, replicas_exporter = harvest_replica_info(replica_map_file)
 
     # Step 3: System config
-    namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts = harvest_sys_config(sys_conf)
+    namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts, enable_kafka_mtls, kafka_tls_secret = harvest_sys_config(sys_conf)
 
     # Step 4: Load manifest template
     manifest = load_yaml_file(manifest_template_file)
@@ -366,7 +391,7 @@ def main():
         raise NoManifestTemplateException()
 
     # Step 5: Update manifest
-    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts)
+    manifest = update_manifest(manifest, aggs, store_stateful_replicas, replicas_exporter, net_vars, namespace, img_pull_sec_opt, agg_port, store_port, enable_stream, enable_exporter, all_mounts, enable_kafka_mtls, kafka_tls_secret)
 
     # Step 6: Write manifest.yaml
     write_yaml_file(manifest_output_file, manifest, description="manifest")
